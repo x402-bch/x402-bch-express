@@ -6,7 +6,6 @@
 const DEFAULT_NETWORK = 'bch'
 const DEFAULT_ASSET = '0x0000000000000000000000000000000000000001'
 const DEFAULT_MIN_AMOUNT = 1000
-const DEFAULT_FACILITATOR_URL = 'http://localhost:4040/facilitator'
 
 /**
  * Normalizes the routes configuration into regex matchers.
@@ -283,7 +282,7 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
 
     try {
       const fetchImpl = resolveFetch(facilitator)
-      const verifyUrl = `${facilitator.url || DEFAULT_FACILITATOR_URL}/verify`
+      const verifyUrl = `${facilitator.url}/verify`
       const headers = await resolveFacilitatorHeaders(facilitator)
 
       const response = await fetchImpl(verifyUrl, {
