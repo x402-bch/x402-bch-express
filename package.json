@@ -7,9 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "npm run lint && TEST=unit c8 mocha test/unit/",
-    "test:integration": "mocha --timeout 25000 test/integration/",
     "lint": "standard --env mocha --fix",
-    "docs": "./node_modules/.bin/apidoc -i src/ -o docs",
     "coverage": "c8 --reporter=html mocha test/unit/ --exit"
   },
   "keywords": [
@@ -27,8 +25,7 @@
   },
   "repository": "x402-bch/x402-bch-express",
   "dependencies": {
-    "@psf/bch-js": "6.8.3",
-    "apidoc": "1.2.0"
+    "@psf/bch-js": "6.8.3"
   },
   "devDependencies": {
     "c8": "10.1.3",
