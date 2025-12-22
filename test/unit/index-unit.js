@@ -224,7 +224,7 @@ describe('#index.js', () => {
       assert.isTrue(fetchStub.calledOnce)
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
-      assert.include(responseBody.error, 'network error')
+      assert.include(responseBody.error, 'Could not communicate with Facilitator')
       assert.isTrue(next.notCalled)
     })
 
