@@ -318,9 +318,23 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
         return
       }
     } catch (error) {
+      // Detect fetch/network errors and provide a more informative message
+      const isNetworkError = error instanceof TypeError ||
+        error.message?.includes('fetch') ||
+        error.message?.includes('network') ||
+        error.message?.includes('ECONNREFUSED') ||
+        error.message?.includes('ENOTFOUND') ||
+        error.message?.includes('ETIMEDOUT') ||
+        error.message?.includes('timeout')
+
+      const errorMessage = isNetworkError
+        ? 'Could not communicate with Facilitator'
+        : (error.message || 'Payment verification failed')
+      console.log(errorMessage)
+
       res.status(402).json({
         x402Version,
-        error: error.message || 'Payment verification failed',
+        error: errorMessage,
         accepts: paymentRequirements
       })
       return
