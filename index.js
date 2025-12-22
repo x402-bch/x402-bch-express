@@ -242,6 +242,11 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
     const matchingRoute = findMatchingRoute(routePatterns, req.path, req.method)
     if (!matchingRoute) return next()
 
+    // Log the IP address of the calling user
+    const clientIp = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown'
+    const endpoint = `${req.method} ${req.path}`
+    console.log(`x402-bch-express: Request from IP address: ${clientIp}, Endpoint called: ${endpoint}`)
+
     const paymentRequirements = buildPaymentRequirements(payTo, matchingRoute.config, req)
     const paymentHeader = req.header('X-PAYMENT')
 
