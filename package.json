@@ -1,7 +1,7 @@
 {
   "name": "x402-bch-express",
-  "version": "1.0.0",
-  "description": "Express middleware for x402 payment protocol with Bitcoin Cash (BCH) support.",
+  "version": "2.0.0",
+  "description": "Express middleware for x402 payment protocol v2 with Bitcoin Cash (BCH) support.",
   "main": "index.js",
   "type": "module",
   "scripts": {
