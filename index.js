@@ -272,6 +272,11 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
     const matchingRoute = findMatchingRoute(routePatterns, req.path, req.method)
     if (!matchingRoute) return next()
 
+    // Log the intercepted request
+    const clientIp = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
+    const endpoint = `${req.method} ${req.path}`
+    console.log(`[x402-bch-express] Intercepted request from ${clientIp} to ${endpoint}`)
+
     const { resourceInfo, paymentRequirements } = buildPaymentRequirements(payTo, matchingRoute.config, req)
     const paymentHeader = req.header('PAYMENT-SIGNATURE')
 
