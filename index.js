@@ -3,9 +3,25 @@
   Provides helpers to compute route patterns and validate payment payloads.
 */
 
-const DEFAULT_NETWORK = 'bch'
+const DEFAULT_NETWORK = 'bip122:000000000000000000651ef99cb9fcbe' // BCH mainnet CAIP-2 format
 const DEFAULT_ASSET = '0x0000000000000000000000000000000000000001'
 const DEFAULT_MIN_AMOUNT = 1000
+const X402_VERSION = 2
+
+/**
+ * Normalizes network identifiers to CAIP-2 format.
+ * Supports backward compatibility with 'bch' format.
+ *
+ * @param {string} network - Network identifier (can be 'bch' or CAIP-2 format)
+ * @returns {string} CAIP-2 formatted network identifier
+ */
+function normalizeNetwork (network) {
+  if (!network || network === 'bch') {
+    return 'bip122:000000000000000000651ef99cb9fcbe' // BCH mainnet
+  }
+  // Already in CAIP-2 format or custom format
+  return network
+}
 
 /**
  * Normalizes the routes configuration into regex matchers.
@@ -15,14 +31,21 @@ const DEFAULT_MIN_AMOUNT = 1000
  * @returns {Array<{ verb: string, pattern: RegExp, config: any }>}
  */
 export function computeRoutePatterns (routes = {}) {
+  const defaultNetwork = normalizeNetwork(routes.network || DEFAULT_NETWORK)
+
   const normalizedRoutes = Object.fromEntries(
     Object.entries(routes)
       .map(([pattern, value]) => {
         if (pattern === 'network') return null
 
         const normalizedValue = (typeof value === 'string' || typeof value === 'number')
-          ? { price: value, network: routes.network || DEFAULT_NETWORK }
-          : { network: routes.network || DEFAULT_NETWORK, ...value }
+          ? { price: value, network: defaultNetwork }
+          : { network: defaultNetwork, ...value }
+
+        // Normalize network in route config if it was overridden
+        if (normalizedValue.network) {
+          normalizedValue.network = normalizeNetwork(normalizedValue.network)
+        }
 
         return [pattern, normalizedValue]
       })
@@ -156,55 +179,55 @@ async function resolveFacilitatorHeaders (facilitator = {}) {
 }
 
 /**
- * Builds the payment requirements object for the current request.
+ * Builds the payment requirements and resource info for the current request (v2 format).
  *
  * @param {string} payTo
  * @param {any} routeConfig
  * @param {import('express').Request} req
- * @returns {Array<Record<string, any>>}
+ * @returns {{ resourceInfo: Record<string, any>, paymentRequirements: Array<Record<string, any>> }}
  */
 function buildPaymentRequirements (payTo, routeConfig, req) {
-  const minAmountRequired = resolveMinAmountRequired(routeConfig)
-  const network = routeConfig.network || DEFAULT_NETWORK
+  const amount = resolveMinAmountRequired(routeConfig)
+  const networkInput = routeConfig.network || DEFAULT_NETWORK
+  const network = normalizeNetwork(networkInput)
   const {
     description = '',
     mimeType = '',
     maxTimeoutSeconds = 60,
-    discoverable = true,
     asset = DEFAULT_ASSET,
-    extra = {},
-    outputSchema
+    extra = {}
   } = routeConfig.config || {}
 
-  const resource = typeof routeConfig?.config?.resource === 'string'
+  const resourceUrl = typeof routeConfig?.config?.resource === 'string'
     ? routeConfig.config.resource
     : `${req.protocol}://${req.headers.host}${req.path}`
 
+  // ResourceInfo object (separated from PaymentRequirements in v2)
+  const resourceInfo = {
+    url: resourceUrl,
+    description,
+    mimeType
+  }
+
+  // PaymentRequirements (v2 format - no resource, description, mimeType)
   const requirements = {
     scheme: 'utxo',
     network,
-    minAmountRequired: String(minAmountRequired),
-    resource,
-    description,
-    mimeType,
+    amount: String(amount),
     payTo,
     maxTimeoutSeconds,
     asset,
-    outputSchema: outputSchema || {
-      input: {
-        type: 'http',
-        method: req.method.toUpperCase(),
-        discoverable
-      }
-    },
     extra
   }
 
-  return [requirements]
+  return {
+    resourceInfo,
+    paymentRequirements: [requirements]
+  }
 }
 
 /**
- * Parses and validates the BCH payment header (JSON string).
+ * Parses and validates the BCH payment header (JSON string) for v2 format.
  *
  * @param {string} headerValue
  * @param {number} x402Version
@@ -212,12 +235,19 @@ function buildPaymentRequirements (payTo, routeConfig, req) {
  */
 function decodePaymentHeader (headerValue, x402Version) {
   const decodedPayment = JSON.parse(headerValue)
-  const requiredFields = ['x402Version', 'scheme', 'network', 'payload']
+
+  // V2 structure: x402Version, accepted (required), payload (required)
+  const requiredFields = ['x402Version', 'accepted', 'payload']
 
   for (const field of requiredFields) {
     if (decodedPayment[field] == null) {
       throw new Error(`Missing required field in payment payload: ${field}`)
     }
+  }
+
+  // Validate accepted object has required fields
+  if (!decodedPayment.accepted.scheme || !decodedPayment.accepted.network) {
+    throw new Error('Missing required field in payment payload accepted object: scheme or network')
   }
 
   decodedPayment.x402Version = x402Version
@@ -230,31 +260,37 @@ function decodePaymentHeader (headerValue, x402Version) {
  * @param {string} payTo
  * @param {Record<string, any>} routes
  * @param {Record<string, any>} facilitator
+ * @param {{ enableLogging?: boolean }} options
  * @returns {import('express').RequestHandler}
  */
-export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
+export function paymentMiddleware (payTo, routes = {}, facilitator = {}, options = {}) {
   if (!payTo) throw new Error('payTo is required')
 
-  const x402Version = 1
+  const x402Version = X402_VERSION
   const routePatterns = computeRoutePatterns(routes)
+  const enableLogging = options.enableLogging !== false // Default to true
 
   return async function paymentMiddlewareHandler (req, res, next) {
     const matchingRoute = findMatchingRoute(routePatterns, req.path, req.method)
     if (!matchingRoute) return next()
 
-    // Log the IP address of the calling user
-    const clientIp = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown'
-    const endpoint = `${req.method} ${req.path}`
-    console.log(`x402-bch-express: Request from IP address: ${clientIp}, Endpoint called: ${endpoint}`)
+    // Log the intercepted request (if logging is enabled)
+    if (enableLogging) {
+      const clientIp = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
+      const endpoint = `${req.method} ${req.path}`
+      console.log(`[x402-bch-express] Intercepted request from ${clientIp} to ${endpoint}`)
+    }
 
-    const paymentRequirements = buildPaymentRequirements(payTo, matchingRoute.config, req)
-    const paymentHeader = req.header('X-PAYMENT')
+    const { resourceInfo, paymentRequirements } = buildPaymentRequirements(payTo, matchingRoute.config, req)
+    const paymentHeader = req.header('PAYMENT-SIGNATURE')
 
     if (!paymentHeader) {
       res.status(402).json({
         x402Version,
-        error: 'X-PAYMENT header is required',
-        accepts: paymentRequirements
+        error: 'PAYMENT-SIGNATURE header is required',
+        resource: resourceInfo,
+        accepts: paymentRequirements,
+        extensions: {}
       })
       return
     }
@@ -266,21 +302,25 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
       res.status(402).json({
         x402Version,
         error: error.message || 'Invalid or malformed payment header',
-        accepts: paymentRequirements
+        resource: resourceInfo,
+        accepts: paymentRequirements,
+        extensions: {}
       })
       return
     }
 
     const selectedPaymentRequirements = paymentRequirements.find(requirement =>
-      requirement.scheme === decodedPayment.scheme &&
-      requirement.network === decodedPayment.network
+      requirement.scheme === decodedPayment.accepted?.scheme &&
+      requirement.network === decodedPayment.accepted?.network
     )
 
     if (!selectedPaymentRequirements) {
       res.status(402).json({
         x402Version,
         error: 'Unable to find matching payment requirements',
-        accepts: paymentRequirements
+        resource: resourceInfo,
+        accepts: paymentRequirements,
+        extensions: {}
       })
       return
     }
@@ -289,6 +329,14 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
       const fetchImpl = resolveFetch(facilitator)
       const verifyUrl = `${facilitator.url}/verify`
       const headers = await resolveFacilitatorHeaders(facilitator)
+
+      // Construct paymentRequirements for verify request (includes resource fields per spec §7.2)
+      const verifyPaymentRequirements = {
+        ...selectedPaymentRequirements,
+        resource: resourceInfo.url,
+        description: resourceInfo.description,
+        mimeType: resourceInfo.mimeType
+      }
 
       const response = await fetchImpl(verifyUrl, {
         method: 'POST',
@@ -299,7 +347,7 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
         body: JSON.stringify({
           x402Version,
           paymentPayload: decodedPayment,
-          paymentRequirements: selectedPaymentRequirements
+          paymentRequirements: verifyPaymentRequirements
         })
       })
 
@@ -312,7 +360,9 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
         res.status(402).json({
           x402Version,
           error: verificationResult.invalidReason || 'Payment verification failed',
+          resource: resourceInfo,
           accepts: paymentRequirements,
+          extensions: {},
           payer: verificationResult.payer || ''
         })
         return
@@ -334,8 +384,10 @@ export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
 
       res.status(402).json({
         x402Version,
-        error: errorMessage,
-        accepts: paymentRequirements
+        error: error.message || 'Payment verification failed',
+        resource: resourceInfo,
+        accepts: paymentRequirements,
+        extensions: {}
       })
       return
     }

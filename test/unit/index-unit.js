@@ -40,11 +40,12 @@ describe('#index.js', () => {
       const protectedRoute = patterns.find(route => route.verb === 'GET')
       assert.isOk(protectedRoute)
       assert.instanceOf(protectedRoute.pattern, RegExp)
-      assert.deepEqual(protectedRoute.config, { network: 'bch', price: 1500 })
+      // Network should be normalized to CAIP-2 format
+      assert.deepEqual(protectedRoute.config, { network: 'bip122:000000000000000000651ef99cb9fcbe', price: 1500 })
 
       const wildcardRoute = patterns.find(route => route.verb === '*')
       assert.isOk(wildcardRoute)
-      assert.deepEqual(wildcardRoute.config, { network: 'bch', price: 1200 })
+      assert.deepEqual(wildcardRoute.config, { network: 'bip122:000000000000000000651ef99cb9fcbe', price: 1200 })
     })
 
     it('should throw an error for invalid route pattern', () => {
@@ -133,9 +134,16 @@ describe('#index.js', () => {
     }
 
     const validPaymentPayload = JSON.stringify({
-      x402Version: 1,
-      scheme: 'utxo',
-      network: 'bch',
+      x402Version: 2,
+      accepted: {
+        scheme: 'utxo',
+        network: 'bip122:000000000000000000651ef99cb9fcbe',
+        amount: '1500',
+        payTo: payToAddress,
+        asset: '0x0000000000000000000000000000000000000001',
+        maxTimeoutSeconds: 60,
+        extra: {}
+      },
       payload: { some: 'data' }
     })
 
@@ -152,7 +160,7 @@ describe('#index.js', () => {
       assert.isTrue(res.json.notCalled)
     })
 
-    it('should respond with 402 when X-PAYMENT header is missing', async () => {
+    it('should respond with 402 when PAYMENT-SIGNATURE header is missing', async () => {
       const middleware = paymentMiddleware(payToAddress, baseRoutes)
       const req = createRequest()
       const res = createResponse()
@@ -162,16 +170,20 @@ describe('#index.js', () => {
 
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
-      assert.equal(responseBody.error, 'X-PAYMENT header is required')
+      assert.equal(responseBody.x402Version, 2)
+      assert.equal(responseBody.error, 'PAYMENT-SIGNATURE header is required')
+      assert.isOk(responseBody.resource)
+      assert.equal(responseBody.resource.url, 'http://example.com/protected')
       assert.equal(responseBody.accepts[0].payTo, payToAddress)
-      assert.equal(responseBody.accepts[0].minAmountRequired, '1500')
+      assert.equal(responseBody.accepts[0].amount, '1500')
+      assert.isOk(responseBody.extensions)
       assert.isTrue(next.notCalled)
     })
 
     it('should respond with 402 when payment header is malformed JSON', async () => {
       const middleware = paymentMiddleware(payToAddress, baseRoutes)
       const req = createRequest({
-        headers: { 'x-payment': '{invalid json' }
+        headers: { 'payment-signature': '{invalid json' }
       })
       const res = createResponse()
       const next = sandbox.stub()
@@ -180,7 +192,10 @@ describe('#index.js', () => {
 
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
+      assert.equal(responseBody.x402Version, 2)
       assert.match(responseBody.error, /JSON/)
+      assert.isOk(responseBody.resource)
+      assert.isOk(responseBody.extensions)
       assert.isTrue(next.notCalled)
     })
 
@@ -188,10 +203,17 @@ describe('#index.js', () => {
       const middleware = paymentMiddleware(payToAddress, baseRoutes)
       const req = createRequest({
         headers: {
-          'x-payment': JSON.stringify({
-            x402Version: 0,
-            scheme: 'account',
-            network: 'bch',
+          'payment-signature': JSON.stringify({
+            x402Version: 2,
+            accepted: {
+              scheme: 'account',
+              network: 'bip122:000000000000000000651ef99cb9fcbe',
+              amount: '1000',
+              payTo: payToAddress,
+              asset: '0x0000000000000000000000000000000000000001',
+              maxTimeoutSeconds: 60,
+              extra: {}
+            },
             payload: {}
           })
         }
@@ -203,7 +225,9 @@ describe('#index.js', () => {
 
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
+      assert.equal(responseBody.x402Version, 2)
       assert.equal(responseBody.error, 'Unable to find matching payment requirements')
+      assert.isOk(responseBody.resource)
       assert.isTrue(next.notCalled)
     })
 
@@ -214,7 +238,7 @@ describe('#index.js', () => {
         fetch: fetchStub
       })
       const req = createRequest({
-        headers: { 'x-payment': validPaymentPayload }
+        headers: { 'payment-signature': validPaymentPayload }
       })
       const res = createResponse()
       const next = sandbox.stub()
@@ -224,7 +248,7 @@ describe('#index.js', () => {
       assert.isTrue(fetchStub.calledOnce)
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
-      assert.include(responseBody.error, 'Could not communicate with Facilitator')
+      assert.include(responseBody.error, 'network error')
       assert.isTrue(next.notCalled)
     })
 
@@ -239,7 +263,7 @@ describe('#index.js', () => {
         fetch: fetchStub
       })
       const req = createRequest({
-        headers: { 'x-payment': validPaymentPayload }
+        headers: { 'payment-signature': validPaymentPayload }
       })
       const res = createResponse()
       const next = sandbox.stub()
@@ -270,7 +294,7 @@ describe('#index.js', () => {
         fetch: fetchStub
       })
       const req = createRequest({
-        headers: { 'x-payment': validPaymentPayload }
+        headers: { 'payment-signature': validPaymentPayload }
       })
       const res = createResponse()
       const next = sandbox.stub()
@@ -279,8 +303,11 @@ describe('#index.js', () => {
 
       assert.isTrue(res.status.calledOnceWithExactly(402))
       const responseBody = res.json.firstCall.args[0]
+      assert.equal(responseBody.x402Version, 2)
       assert.equal(responseBody.error, 'insufficient amount')
       assert.equal(responseBody.payer, 'payer-id')
+      assert.isOk(responseBody.resource)
+      assert.isOk(responseBody.extensions)
       assert.isTrue(next.notCalled)
     })
 
@@ -304,7 +331,7 @@ describe('#index.js', () => {
       const req = createRequest({
         protocol: 'https',
         host: 'app.example',
-        headers: { 'x-payment': validPaymentPayload }
+        headers: { 'payment-signature': validPaymentPayload }
       })
       const res = createResponse()
       const next = sandbox.stub()
@@ -322,14 +349,25 @@ describe('#index.js', () => {
       })
 
       const parsedBody = JSON.parse(fetchOptions.body)
+      assert.equal(parsedBody.x402Version, 2)
       assert.deepEqual(parsedBody.paymentPayload, {
-        x402Version: 1,
-        scheme: 'utxo',
-        network: 'bch',
+        x402Version: 2,
+        accepted: {
+          scheme: 'utxo',
+          network: 'bip122:000000000000000000651ef99cb9fcbe',
+          amount: '1500',
+          payTo: payToAddress,
+          asset: '0x0000000000000000000000000000000000000001',
+          maxTimeoutSeconds: 60,
+          extra: {}
+        },
         payload: { some: 'data' }
       })
       assert.equal(parsedBody.paymentRequirements.payTo, payToAddress)
+      assert.equal(parsedBody.paymentRequirements.amount, '1500')
       assert.equal(parsedBody.paymentRequirements.resource, 'https://app.example/protected')
+      assert.equal(parsedBody.paymentRequirements.scheme, 'utxo')
+      assert.equal(parsedBody.paymentRequirements.network, 'bip122:000000000000000000651ef99cb9fcbe')
 
       assert.isTrue(next.calledOnce)
       assert.isTrue(res.status.notCalled)
