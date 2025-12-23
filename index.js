@@ -260,22 +260,26 @@ function decodePaymentHeader (headerValue, x402Version) {
  * @param {string} payTo
  * @param {Record<string, any>} routes
  * @param {Record<string, any>} facilitator
+ * @param {{ enableLogging?: boolean }} options
  * @returns {import('express').RequestHandler}
  */
-export function paymentMiddleware (payTo, routes = {}, facilitator = {}) {
+export function paymentMiddleware (payTo, routes = {}, facilitator = {}, options = {}) {
   if (!payTo) throw new Error('payTo is required')
 
   const x402Version = X402_VERSION
   const routePatterns = computeRoutePatterns(routes)
+  const enableLogging = options.enableLogging !== false // Default to true
 
   return async function paymentMiddlewareHandler (req, res, next) {
     const matchingRoute = findMatchingRoute(routePatterns, req.path, req.method)
     if (!matchingRoute) return next()
 
-    // Log the intercepted request
-    const clientIp = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
-    const endpoint = `${req.method} ${req.path}`
-    console.log(`[x402-bch-express] Intercepted request from ${clientIp} to ${endpoint}`)
+    // Log the intercepted request (if logging is enabled)
+    if (enableLogging) {
+      const clientIp = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
+      const endpoint = `${req.method} ${req.path}`
+      console.log(`[x402-bch-express] Intercepted request from ${clientIp} to ${endpoint}`)
+    }
 
     const { resourceInfo, paymentRequirements } = buildPaymentRequirements(payTo, matchingRoute.config, req)
     const paymentHeader = req.header('PAYMENT-SIGNATURE')

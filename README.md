@@ -42,6 +42,10 @@ app.use(
       verifyHeaders: {
         Authorization: `Bearer ${process.env.FACILITATOR_TOKEN}`
       }
+    },
+    {
+      // Optional: disable request logging (logging is enabled by default)
+      // enableLogging: false
     }
   )
 )
@@ -63,13 +67,14 @@ app.listen(4021, () => {
 
 ## Configuration Reference
 
-### `paymentMiddleware(payTo, routes, facilitator)`
+### `paymentMiddleware(payTo, routes, facilitator, options)`
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `payTo` | `string` | ✅ | BCH cash address that receives funding UTXOs. |
 | `routes` | `Record<string, RouteConfig>` | ✅ | Route pricing map keyed by `"VERB /path"` (verb optional, defaults to `*`). A top-level `network` key sets the default network (default `"bch"`). |
 | `facilitator` | `FacilitatorConfig` | Optional | Controls how the middleware talks to the facilitator service. |
+| `options` | `Options` | Optional | Additional middleware configuration options. |
 
 #### Route Config
 
@@ -92,6 +97,12 @@ app.listen(4021, () => {
 | `fetch` | `Function` | Custom `fetch` implementation. Useful on Node versions without a global `fetch`. |
 | `verifyHeaders` | `Record<string, string>` | Static headers merged into the `/verify` request. |
 | `createAuthHeaders` | `() => Promise<{ verify?: Record<string, string> }>` | Async hook to generate per-request headers (e.g., refreshing tokens). |
+
+#### Options
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enableLogging` | `boolean` | Controls whether intercepted requests are logged to the console. Defaults to `true`. Set to `false` to disable logging. |
 
 ## Additional Helpers
 
